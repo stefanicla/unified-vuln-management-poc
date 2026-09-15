@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Stakeholder Demo Script - Shows key DefectDojo views for presentation
+# Run after setup-all.sh completes
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+log() { echo "[$(date '+%H:%M:%S')] $1"; }
+
+print_demo_urls() {
+    echo ""
+    echo "=========================================="
+    echo "  STAKEHOLDER DEMO - Key URLs"
+    echo "=========================================="
+    echo ""
+    echo "🏠  Dashboard (Executive Summary)"
+    echo "    http://localhost:8080"
+    echo ""
+    echo "📦  Product View - DefectDojo PoC App"
+    echo "    http://localhost:8080/product/1"
+    echo "    → Shows all engagements, findings trend, risk acceptance"
+    echo ""
+    echo "🎯  Engagement View - PoC Scan Run"
+    echo "    http://localhost:8080/engagement/1"
+    echo "    → Single scan run overview, deduplication, SLA status"
+    echo ""
+    echo "🔬  Test View - Individual Scanner Results"
+    echo "    http://localhost:8080/test/1    (Semgrep - SAST)"
+    echo "    http://localhost:8080/test/2    (Trivy FS - SCA/Secrets)"
+    echo "    http://localhost:8080/test/3    (Trivy Container - Container)"
+    echo "    http://localhost:8080/test/4    (OWASP ZAP - DAST)"
+    echo "    → Each test shows findings specific to that scanner"
+    echo ""
+    echo "📊  Findings List (All)"
+    echo "    http://localhost:8080/finding?test=1&o=-severity"
+    echo "    → Filterable, sortable, exportable findings table"
+    echo ""
+    echo "📈  Metrics / Reports"
+    echo "    http://localhost:8080/metrics"
+    echo "    → Trend charts, severity distribution, SLA compliance"
+    echo ""
+    echo "🔍  Advanced Filtering Examples"
+    echo "    http://localhost:8080/finding?severity=High,Critical&test=1"
+    echo "    http://localhost:8080/finding?test=1&verified=False"
+    echo "    http://localhost:8080/finding?o=-date&verified=False"
+    echo ""
+}
+
+print_demo_flow() {
+    echo ""
+    echo "=========================================="
+    echo "  SUGGESTED DEMO FLOW (10 min)"
+    echo "=========================================="
+    echo ""
+    echo "1. DASHBOARD (1 min)"
+    echo "   → http://localhost:8080"
+    echo "   → Point out: 'Single pane of glass for all security tools'"
+    echo "   → Click 'Products' → 'DefectDojo PoC App'"
+    echo ""
+    echo "2. PRODUCT VIEW (2 min)"
+    echo "   → http://localhost:8080/product/1"
+    echo "   → Show: Engagement timeline, Findings trend chart"
+    echo "   → Click 'Engagements' tab → 'PoC Scan Run'"
+    echo ""
+    echo "3. ENGAGEMENT VIEW (2 min)"
+    echo "   → http://localhost:8080/engagement/1"
+    echo "   → Show: Test list with scanner names, finding counts"
+    echo "   → Click 'Tests' tab → Click individual test"
+    echo ""
+    echo "4. TEST VIEWS - Scanner Deep Dive (3 min)"
+    echo "   → Test 1 (Semgrep): SAST findings - SQLi, XSS, Path Traversal"
+    echo "   → Test 2 (Trivy FS): Vulnerable deps, Hardcoded secrets, License issues"
+    echo "   → Test 3 (Trivy Container): 120+ CVEs in nginx:1.23-alpine"
+    echo "   → Test 4 (ZAP): Missing CSP, HSTS, Vulnerable JS libs"
+    echo ""
+    echo "5. FINDINGS TABLE (2 min)"
+    echo "   → http://localhost:8080/finding?test=1&o=-severity"
+    echo "   → Demo: Filter by severity, Verify/Close findings, Export CSV"
+    echo "   → Show: 'This is what developers see in their workflow'"
+    echo ""
+}
+
+print_key_talking_points() {
+    echo ""
+    echo "=========================================="
+    echo "  KEY TALKING POINTS FOR STAKEHOLDERS"
+    echo "=========================================="
+    echo ""
+    echo "🎯 UNIFIED VIEW"
+    echo "   'One dashboard aggregates 5 different security scanners'"
+    echo "   'No more jumping between tool-specific UIs'"
+    echo ""
+    echo "🔄 DEDUPLICATION"
+    echo "   'Same vulnerability found by Semgrep and Trivy → single finding'"
+    echo "   'Reduces noise, focuses remediation effort'"
+    echo ""
+    echo "📋 TRACEABILITY"
+    echo "   'Every finding links back to: Scanner → Test → Engagement → Product'"
+    echo "   'Full audit trail for compliance (SOC2, ISO27001, etc.)'"
+    echo ""
+    echo "⚡ WORKFLOW INTEGRATION"
+    echo "   'Findings → Jira/GitHub/GitLab tickets with one click'"
+    echo "   'SLA tracking with automatic escalation'"
+    echo "   'Risk acceptance with expiration dates'"
+    echo ""
+    echo "📊 EXECUTIVE REPORTING"
+    echo "   'Trend charts: Are we getting better over time?'"
+    echo "   'SLA compliance: What % of critical findings fixed on time?'"
+    echo "   'Scanner coverage: Which tools running where?'"
+    echo ""
+    echo "🔧 DEVOPS INTEGRATION"
+    echo "   'GitLab CI / GitHub Actions → push findings automatically'"
+    echo "   'Fail pipeline on Critical/High findings'"
+    echo "   'Shift-left: developers see findings in MR comments'"
+    echo ""
+}
+
+main() {
+    print_demo_urls
+    print_demo_flow
+    print_key_talking_points
+
+    echo "=========================================="
+    echo "  OPENING DEMO URLS IN BROWSER..."
+    echo "=========================================="
+    echo "Run: start http://localhost:8080"
+    echo ""
+}
+
+main "$@"

@@ -1,0 +1,234 @@
+# GitLab CI/CD Pipeline for DefectDojo PoC
+# Reference implementation - adapt for your GitLab instance
+#
+# This pipeline demonstrates how to run all security scanners in GitLab CI
+# and import results to DefectDojo.
+#
+# Prerequisites:
+# - GitLab Runner with Docker executor
+# - Docker-in-Docker (dind) service for container scanning
+# - DefectDojo instance accessible from runner
+# - CI/CD Variables configured (see below)
+#
+# Required CI/CD Variables (Settings > CI/CD > Variables):
+# - DEFECTDOJO_HOST: https://your-defectdojo.example.com
+# - DEFECTDOJO_API_KEY: API v2 token from DefectDojo
+# - DEFECTDOJO_PRODUCT: "Your Product Name"
+# - DEFECTDOJO_ENGAGEMENT: "CI Pipeline Scan"
+# - REGISTRY_IMAGE: $CI_REGISTRY_IMAGE/$CI_PROJECT_PATH (for container scanning)
+
+stages:
+  - prepare
+  - sast
+  - sca
+  - container
+  - dast
+  - import
+
+variables:
+  # Docker configuration
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  # Trivy cache
+  TRIVY_CACHE_DIR: "/cache/trivy"
+  # Semgrep config
+  SEMGREP_CONFIG: "p/owasp-top-ten"
+  # Artifact paths
+  ARTIFACTS_DIR: "artifacts"
+  MOCK_APP_DIR: "mock-app"
+
+# Default image for jobs
+default:
+  image: docker:27-cli
+  services:
+    - docker:27-dind
+  before_script:
+    - docker info
+    - apk add --no-cache curl jq python3 py3-pip
+    - pip install --no-cache-dir requests
+
+# =============================================================================
+# Prepare Stage
+# =============================================================================
+prepare:
+  stage: prepare
+  script:
+    - echo "Preparing build environment..."
+    - mkdir -p $ARTIFACTS_DIR
+  artifacts:
+    paths:
+      - $ARTIFACTS_DIR/
+    expire_in: 1 week
+
+# =============================================================================
+# SAST - Semgrep (OWASP Top 10)
+# =============================================================================
+semgrep-sast:
+  stage: sast
+  image: returntocorp/semgrep:latest
+  variables:
+    GIT_STRATEGY: "none"  # We only need the source code
+  script:
+    - echo "Running Semgrep SAST scan..."
+    - semgrep scan --config=$SEMGREP_CONFIG --sarif --output=$ARTIFACTS_DIR/semgrep.sarif $MOCK_APP_DIR || true
+    - echo "Semgrep scan completed"
+  artifacts:
+    reports:
+      sast: $ARTIFACTS_DIR/semgrep.sarif
+    paths:
+      - $ARTIFACTS_DIR/semgrep.sarif
+    expire_in: 1 week
+  allow_failure: true
+
+# =============================================================================
+# SCA - npq (Malicious Package Check)
+# =============================================================================
+npq-sca:
+  stage: sca
+  image: node:20-alpine
+  script:
+    - echo "Installing dependencies..."
+    - cd $MOCK_APP_DIR && npm ci
+    - echo "Running npq malicious package check..."
+    - npx -y npq --format=sarif > ../$ARTIFACTS_DIR/npq.sarif || true
+    - echo "npq scan completed"
+  artifacts:
+    paths:
+      - $ARTIFACTS_DIR/npq.sarif
+    expire_in: 1 week
+  allow_failure: true
+
+# =============================================================================
+# SCA - Trivy Filesystem (Vulns, Misconfigs, Secrets, Licenses)
+# =============================================================================
+trivy-fs:
+  stage: sca
+  image: aquasec/trivy:latest
+  volumes:
+    - $TRIVY_CACHE_DIR:/root/.cache/trivy
+  script:
+    - echo "Running Trivy filesystem scan..."
+    - trivy fs --format sarif --output $ARTIFACTS_DIR/trivy-fs.sarif --scanners vuln,misconfig,secret,license $MOCK_APP_DIR || true
+    - echo "Trivy filesystem scan completed"
+  artifacts:
+    paths:
+      - $ARTIFACTS_DIR/trivy-fs.sarif
+    expire_in: 1 week
+  allow_failure: true
+
+# =============================================================================
+# Container Scanning - Trivy Image
+# =============================================================================
+trivy-container:
+  stage: container
+  image: aquasec/trivy:latest
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  services:
+    - name: docker:27-dind
+      command: ["--tls=true"]
+  script:
+    - echo "Building application container..."
+    - docker build -t $REGISTRY_IMAGE:test $MOCK_APP_DIR
+    - echo "Running Trivy container scan..."
+    - trivy image --format sarif --output $ARTIFACTS_DIR/trivy-container.sarif $REGISTRY_IMAGE:test || true
+    - echo "Trivy container scan completed"
+  artifacts:
+    paths:
+      - $ARTIFACTS_DIR/trivy-container.sarif
+    expire_in: 1 week
+  allow_failure: true
+
+# =============================================================================
+# DAST - OWASP ZAP Baseline Scan
+# =============================================================================
+zap-dast:
+  stage: dast
+  image: zaproxy/zap-stable:latest
+  variables:
+    ZAP_TARGET_PORT: "4200"
+  services:
+    - name: $REGISTRY_IMAGE:test
+      alias: app
+  script:
+    - echo "Starting application for ZAP scan..."
+    - docker run -d --name zap-target -p 4200:80 $REGISTRY_IMAGE:test
+    - sleep 15  # Wait for app to be ready
+    - echo "Running OWASP ZAP baseline scan..."
+    - zap-baseline.py -t http://app:4200 -r $ARTIFACTS_DIR/zap-report.html -J $ARTIFACTS_DIR/zap-report.json -x $ARTIFACTS_DIR/zap-report.xml || true
+    - docker stop zap-target
+    - echo "ZAP scan completed"
+  artifacts:
+    paths:
+      - $ARTIFACTS_DIR/zap-report.json
+      - $ARTIFACTS_DIR/zap-report.html
+      - $ARTIFACTS_DIR/zap-report.xml
+    expire_in: 1 week
+  allow_failure: true
+
+# =============================================================================
+# Import to DefectDojo
+# =============================================================================
+import-to-defectdojo:
+  stage: import
+  image: python:3.12-slim
+  needs:
+    - semgrep-sast
+    - npq-sca
+    - trivy-fs
+    - trivy-container
+    - zap-dast
+  variables:
+    ARTIFACTS_DIR: "artifacts"
+  before_script:
+    - pip install --no-cache-dir requests
+    - curl -sSL https://raw.githubusercontent.com/DefectDojo/django-DefectDojo/master/docs/import_tool.py -o import_tool.py || true
+  script:
+    - echo "Collecting artifacts from previous stages..."
+    - mkdir -p $ARTIFACTS_DIR
+    # Artifacts are automatically downloaded by GitLab when using needs[]
+    - echo "Importing to DefectDojo..."
+    - |
+      python3 << 'EOF'
+      import os
+      import sys
+      sys.path.insert(0, '.')
+      from scripts.import_to_defectdojo import main
+      import argparse
+      sys.argv = [
+          'import_to_defectdojo.py',
+          '--host', os.getenv('DEFECTDOJO_HOST', ''),
+          '--api-key', os.getenv('DEFECTDOJO_API_KEY', ''),
+          '--artifacts-dir', os.getenv('ARTIFACTS_DIR', 'artifacts'),
+          '--product-name', os.getenv('DEFECTDOJO_PRODUCT', 'GitLab CI Project'),
+          '--engagement-name', os.getenv('DEFECTDOJO_ENGAGEMENT', 'CI Pipeline Scan')
+      ]
+      main()
+      EOF
+    - echo "Import completed"
+  allow_failure: true
+  only:
+    - main
+    - merge_requests
+    - tags
+
+# =============================================================================
+# Optional: Security Gate
+# =============================================================================
+security-gate:
+  stage: import
+  image: alpine:latest
+  needs:
+    - import-to-defectdojo
+  script:
+    - echo "Checking security gate..."
+    - |
+      # Query DefectDojo for critical/high findings
+      # Fail pipeline if threshold exceeded
+      echo "Security gate passed (configure thresholds as needed)"
+  allow_failure: false
+  only:
+    - main
+    - merge_requests

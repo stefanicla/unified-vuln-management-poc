@@ -1,0 +1,51 @@
+# Artifacts and reports
+artifacts/
+*.sarif
+*.json
+*.html
+*.xml
+
+# Node.js
+mock-app/node_modules/
+mock-app/dist/
+mock-app/.angular/
+
+# Environment files
+mock-app/.env
+mock-app/.env.local
+*.env
+*.env.local
+.env.*.local
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# DefectDojo
+infra/docker-compose.defectdojo.yml.bak
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo

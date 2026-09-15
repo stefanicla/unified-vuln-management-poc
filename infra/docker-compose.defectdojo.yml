@@ -1,0 +1,223 @@
+# DefectDojo Docker Compose for PoC
+# Based on https://github.com/DefectDojo/django-DefectDojo/blob/master/docker-compose.yml
+# Uses official images: defectdojo/defectdojo-django, defectdojo/defectdojo-nginx
+# Image versions pinned for reproducibility:
+#   defectdojo/defectdojo-django:3.2.400  (DefectDojo v3.2.400)
+#   defectdojo/defectdojo-nginx:latest    (no versioned tags available)
+#   postgres:15-alpine                    (PostgreSQL 15 LTS)
+#   redis:7-alpine                        (Redis 7 LTS)
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: defectdojo-postgres
+    environment:
+      POSTGRES_DB: defectdojo
+      POSTGRES_USER: defectdojo
+      POSTGRES_PASSWORD: defectdojo_pass
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U defectdojo -d defectdojo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - defectdojo-net
+
+  # Redis for caching and Celery broker
+  redis:
+    image: redis:7-alpine
+    container_name: defectdojo-redis
+    command: redis-server --appendonly yes --requirepass defectdojo_redis_pass
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - defectdojo-net
+
+  # Django application (uWSGI)
+  uwsgi:
+    image: defectdojo/defectdojo-django:3.2.400
+    container_name: defectdojo-uwsgi
+    environment:
+      # Database
+      DD_DATABASE_HOST: postgres
+      DD_DATABASE_PORT: "5432"
+      DD_DATABASE_NAME: defectdojo
+      DD_DATABASE_USER: defectdojo
+      DD_DATABASE_PASSWORD: defectdojo_pass
+      # Redis
+      DD_REDIS_HOST: redis
+      DD_REDIS_PORT: "6379"
+      DD_REDIS_PASSWORD: defectdojo_redis_pass
+      DD_CELERY_BROKER_URL: "redis://:defectdojo_redis_pass@redis:6379/0"
+      DD_CELERY_RESULT_BACKEND: "redis://:defectdojo_redis_pass@redis:6379/1"
+      # Security
+      DD_SECRET_KEY: "changeme-in-production-use-strong-random-key"
+      DD_CREDENTIAL_AES_256_KEY: "&91a*agLqesc*0DJ+2*bAbsUZfR*4nLw"
+      # Settings
+      DD_DEBUG: "False"
+      DD_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
+      DD_CSRF_TRUSTED_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
+      # Initial admin (set by initializer)
+      DD_INITIAL_ADMIN_USER: "admin"
+      DD_INITIAL_ADMIN_PASSWORD: "admin"
+      DD_INITIAL_ADMIN_EMAIL: "admin@example.com"
+      # Timezone
+      TZ: "UTC"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - defectdojo-net
+    volumes:
+      - media-files:/app/media
+      - static-files:/app/static
+
+  # Celery worker for background tasks
+  celeryworker:
+    image: defectdojo/defectdojo-django:3.2.400
+    container_name: defectdojo-celery
+    command: celery -A dojo worker -l INFO --concurrency=4
+    environment:
+      DD_DATABASE_HOST: postgres
+      DD_DATABASE_PORT: "5432"
+      DD_DATABASE_NAME: defectdojo
+      DD_DATABASE_USER: defectdojo
+      DD_DATABASE_PASSWORD: defectdojo_pass
+      DD_REDIS_HOST: redis
+      DD_REDIS_PORT: "6379"
+      DD_REDIS_PASSWORD: defectdojo_redis_pass
+      DD_CELERY_BROKER_URL: "redis://:defectdojo_redis_pass@redis:6379/0"
+      DD_CELERY_RESULT_BACKEND: "redis://:defectdojo_redis_pass@redis:6379/1"
+      DD_SECRET_KEY: "changeme-in-production-use-strong-random-key"
+      DD_CREDENTIAL_AES_256_KEY: "&91a*agLqesc*0DJ+2*bAbsUZfR*4nLw"
+      DD_DEBUG: "False"
+      TZ: "UTC"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      uwsgi:
+        condition: service_started
+    networks:
+      - defectdojo-net
+    volumes:
+      - media-files:/app/media
+      - static-files:/app/static
+
+  # Celery beat for periodic tasks
+  celerybeat:
+    image: defectdojo/defectdojo-django:3.2.400
+    container_name: defectdojo-celerybeat
+    command: celery -A dojo beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      DD_DATABASE_HOST: postgres
+      DD_DATABASE_PORT: "5432"
+      DD_DATABASE_NAME: defectdojo
+      DD_DATABASE_USER: defectdojo
+      DD_DATABASE_PASSWORD: defectdojo_pass
+      DD_REDIS_HOST: redis
+      DD_REDIS_PORT: "6379"
+      DD_REDIS_PASSWORD: defectdojo_redis_pass
+      DD_CELERY_BROKER_URL: "redis://:defectdojo_redis_pass@redis:6379/0"
+      DD_CELERY_RESULT_BACKEND: "redis://:defectdojo_redis_pass@redis:6379/1"
+      DD_SECRET_KEY: "changeme-in-production-use-strong-random-key"
+      DD_CREDENTIAL_AES_256_KEY: "&91a*agLqesc*0DJ+2*bAbsUZfR*4nLw"
+      DD_DEBUG: "False"
+      TZ: "UTC"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      uwsgi:
+        condition: service_started
+    networks:
+      - defectdojo-net
+    volumes:
+      - media-files:/app/media
+      - static-files:/app/static
+
+  # Initializer - runs migrations, creates admin user, loads fixtures
+  initializer:
+    image: defectdojo/defectdojo-django:3.2.400
+    container_name: defectdojo-initializer
+    command: >
+      sh -c "
+        python manage.py migrate --noinput &&
+        python manage.py loaddata product_type &&
+        python manage.py loaddata role &&
+        python manage.py loaddata benefit &&
+        python manage.py loaddata regulation &&
+        python manage.py loaddata objects_refs &&
+        python manage.py collectstatic --noinput &&
+        python manage.py create_admin --username admin --password admin --email admin@example.com --first_name Admin --last_name User
+      "
+    environment:
+      DD_DATABASE_HOST: postgres
+      DD_DATABASE_PORT: "5432"
+      DD_DATABASE_NAME: defectdojo
+      DD_DATABASE_USER: defectdojo
+      DD_DATABASE_PASSWORD: defectdojo_pass
+      DD_REDIS_HOST: redis
+      DD_REDIS_PORT: "6379"
+      DD_REDIS_PASSWORD: defectdojo_redis_pass
+      DD_SECRET_KEY: "changeme-in-production-use-strong-random-key"
+      DD_CREDENTIAL_AES_256_KEY: "&91a*agLqesc*0DJ+2*bAbsUZfR*4nLw"
+      DD_DEBUG: "False"
+      DD_INITIAL_ADMIN_USER: "admin"
+      DD_INITIAL_ADMIN_PASSWORD: "admin"
+      DD_INITIAL_ADMIN_EMAIL: "admin@example.com"
+      TZ: "UTC"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - defectdojo-net
+    volumes:
+      - media-files:/app/media
+      - static-files:/app/static
+
+  # Nginx reverse proxy
+  nginx:
+    image: defectdojo/defectdojo-nginx:latest  # no versioned tags available
+    container_name: defectdojo-nginx
+    ports:
+      - "8080:8080"
+    environment:
+      DD_UWSGI_HOST: uwsgi
+      DD_UWSGI_PORT: "3031"
+      NGINX_METRICS_ENABLED: "false"
+    depends_on:
+      uwsgi:
+        condition: service_started
+      initializer:
+        condition: service_completed_successfully
+    networks:
+      - defectdojo-net
+    volumes:
+      - static-files:/app/static
+      - media-files:/app/media
+
+volumes:
+  postgres-data:
+  redis-data:
+  media-files:
+  static-files:
+
+networks:
+  defectdojo-net:
+    driver: bridge
