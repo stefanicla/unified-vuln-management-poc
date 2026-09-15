@@ -332,7 +332,7 @@ MIT — Free for any use.
 
 ## References
 
-- [DefectDojo Documentation](https://defectdojo.github.io/)
+- [DefectDojo Documentation](https://docs.defectdojo.com/)
 - [DefectDojo Docker Compose](https://github.com/DefectDojo/django-DefectDojo/tree/master/docker)
 - [Semgrep OWASP Top 10](https://semgrep.dev/p/owasp-top-ten)
 - [Trivy Documentation](https://aquasecurity.github.io/trivy/)
